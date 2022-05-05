@@ -1,0 +1,48 @@
+--- 
+apiVersion: v1
+data:
+  serverDZ.cfg: |
+      hostname = "YOUR SERVER NAME";
+      password = "";
+      passwordAdmin = "";
+      maxPlayers = 30;
+      verifySignatures = 2;
+      forceSameBuild = 1;
+      disableVoN = 0;
+      vonCodeQuality = 20;
+      disable3rdPerson = 1;
+      disableCrosshair = 0;
+      serverTime = "SystemTime";
+      serverTimeAcceleration = 30;
+      serverNightTimeAcceleration = 2;
+      serverTimePersistent = 0;
+      guaranteedUpdates = 1;
+      loginQueueConcurrentPlayers = 5;
+      loginQueueMaxPlayers = 500;
+      instanceId = 1;
+      storageAutoFix = 0;
+      steamQueryPort = 27016;
+      maxPing = 100;
+      logFile = "server_console.log";
+      class Missions
+      {
+        class DayZ
+        {
+          template = "dayzOffline.chernarusplus";
+        };
+      };
+kind: ConfigMap
+metadata: 
+  name: dayz-server-cfg
+  namespace: dayz
+---
+apiVersion: v1
+data:
+  BEServer_x64.cfg: |
+      RConPassword = "YOUR RCON PASSWORD";
+      RestrictRCon = 1;
+kind: ConfigMap
+metadata:
+  name: dayz-beserver-cfg
+  namespace: dayz
+

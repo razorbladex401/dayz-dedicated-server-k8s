@@ -1,0 +1,70 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dayz
+  namespace: dayz
+  labels:
+    app: dayz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dayz
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: dayz
+    spec:
+      volumes:
+        - name: dayz-data
+          persistentVolumeClaim:
+            claimName: dayz-data-pvc
+        - name: dayz-profile
+          persistentVolumeClaim:
+            claimName: dayz-profile-pvc
+        - name: dayz-server-cfg
+          configMap:
+            name: dayz-server-cfg
+            items:
+            - key: serverDZ.cfg
+              path: serverDZ.cfg
+        - name: dayz-beserver-cfg
+          configMap:
+            name: dayz-beserver-cfg
+            items:
+            - key: BEServer_x64.cfg
+              path: BEServer_x64.cfg
+      containers:
+        - name: dayz
+          image: razorbladex401/dayz:latest
+          imagePullPolicy: Always
+          volumeMounts:
+          - mountPath: "/home/steam/dayz"
+            name: dayz-data
+          - mountPath: "/home/steam/profile"
+            name: dayz-profile
+          - name: dayz-server-cfg
+            mountPath: "/home/steam/serverDZ.cfg"
+            subPath: serverDZ.cfg
+          - name: dayz-beserver-cfg
+            mountPath: "/home/steam/dayz/battleye/BEServer_x64.cfg"
+            subPath: BEServer_x64.cfg
+          ports:
+            - name: rcon
+              containerPort: 2310
+            - name: steam-27016
+              containerPort: 27016
+            - name: steam-8766
+              containerPort: 8766
+            - name: game-2305
+              containerPort: 2305
+            - name: game-2304
+              containerPort: 2304
+            - name: game-2303
+              containerPort: 2303
+            - name: game-2302
+              containerPort: 2302
+

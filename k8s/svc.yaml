@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: dayz
+  name: dayz-udp
+  namespace: dayz
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "YOUR IP HERE"
+spec:
+  ports:
+    - name: steam
+      port: 27016
+      protocol: UDP
+      targetPort: 27016
+    - name: game-2302
+      port: 2302
+      protocol: UDP
+      targetPort: 2302
+    - name: game-2303
+      port: 2303
+      protocol: UDP
+      targetPort: 2303
+    - name: game-2304
+      port: 2304
+      protocol: UDP
+      targetPort: 2304
+    - name: game-2305
+      port: 2305
+      protocol: UDP
+      targetPort: 2305
+  selector:
+    app: dayz
+  type: LoadBalancer
+  loadBalancerIP: YOUR IP HERE
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: dayz
+  name: dayz-tcp
+  namespace: dayz
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "YOUR IP HERE"
+spec:
+  ports:
+    - name: steam-tcp
+      port: 27016
+      protocol: TCP
+      targetPort: 27016
+    - name: rcon
+      port: 2310
+      protocol: TCP
+      targetPort: 2310
+  selector:
+    app: dayz
+  type: LoadBalancer
+  loadBalancerIP: YOUR IP HERE

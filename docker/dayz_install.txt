@@ -1,0 +1,4 @@
+login anonymous
+force_install_dir /home/steam/dayz
+app_update 1042420 validate
+exit
