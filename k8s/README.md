@@ -1,4 +1,6 @@
 # k8s
+This has been tested against Kubernetes v1.23.6 with Metallb v0.12.1 and nfs-subdir-external-provisioner v4.0.13.
+
 ### configmap.yaml
 Contains the serverDZ.cfg and BEServer_x64.cfg files.  You'll want to add your own configuration here.
 
