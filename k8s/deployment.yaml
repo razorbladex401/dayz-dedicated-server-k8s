@@ -52,7 +52,38 @@ spec:
           - name: dayz-beserver-cfg
             mountPath: "/home/steam/dayz/battleye/BEServer_x64.cfg"
             subPath: BEServer_x64.cfg
+        - name: openssh-server
+          image: lscr.io/linuxserver/openssh-server:latest
+          imagePullPolicy: Always
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "America/New_York"
+            - name: SUDO_ACCESS
+              value: "false"
+            - name: PASSWORD_ACCESS
+              value: "true"
+            - name: USER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: ssh-sec
+                  key: USER_NAME
+            - name: USER_PASSWORD
+              valueFrom: 
+                secretKeyRef:
+                  name: ssh-sec
+                  key: USER_PASSWORD
+          volumeMounts:
+          - mountPath: "/home/steam/dayz"
+            name: dayz-data
+          - mountPath: "/home/steam/profile"
+            name: dayz-profile
           ports:
+            - name: ssh
+              containerPort: 2222
             - name: rcon
               containerPort: 2310
             - name: steam-27016

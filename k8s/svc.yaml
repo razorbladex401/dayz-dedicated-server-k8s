@@ -45,6 +45,8 @@ metadata:
     metallb.universe.tf/allow-shared-ip: "YOUR IP HERE"
 spec:
   ports:
+    - name: ssh
+      port: 2222
     - name: steam-tcp
       port: 27016
       protocol: TCP
