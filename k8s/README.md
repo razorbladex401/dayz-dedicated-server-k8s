@@ -28,3 +28,12 @@ Creates the secret that contains the ssh username and password.  You have to bas
 
 ### svc.yaml
 Creates the K8s service that you can use to connect to the pod.  Note that in my environment I'm using metallb in layer2 mode.  This is enough for my configuration but you may have different needs.  The svc.yaml file expects that you will specify the IP for the pod.  It creates two services, one for udp and the other for tcp ports.
+
+### cronjob.yaml
+Configures the cronjob that triggers a restart of the deployment every X hours.  By default it's set to 12 hours.
+
+### rbac.yaml
+Contains the Role and Rolebinding for the service account used by the cronjob.
+
+### serviceaccount.yaml
+Creates the service account used by the restart-dayz cronjob.

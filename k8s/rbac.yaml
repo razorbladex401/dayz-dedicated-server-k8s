@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dayz-svc
+  namespace: dayz
+rules:
+  - apiGroups: ["apps", "extensions"]
+    resources: ["deployments"]
+    resourceNames: ["dayz"]
+    verbs: ["get", "patch", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dayz-svc
+  namespace: dayz
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dayz-svc
+subjects:
+  - kind: ServiceAccount
+    name: dayz-svc
+    namespace: dayz
