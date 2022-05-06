@@ -25,6 +25,9 @@ spec:
         - name: dayz-profile
           persistentVolumeClaim:
             claimName: dayz-profile-pvc
+        - name: ssh-config
+          persistentVolumeClaim:
+            claimName: ssh-config-pvc
         - name: dayz-server-cfg
           configMap:
             name: dayz-server-cfg
@@ -77,6 +80,8 @@ spec:
                   name: ssh-sec
                   key: USER_PASSWORD
           volumeMounts:
+          - mountPath: "/config"
+            name: ssh-config
           - mountPath: "/home/steam/dayz"
             name: dayz-data
           - mountPath: "/home/steam/profile"

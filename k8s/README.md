@@ -9,12 +9,17 @@ For more options regarding the openssh server container see, https://hub.docker.
 
 ### namespace.yaml
 Creates the namespace.
+
 *default: dayz*
 
 ### pvc.yaml
 Creates the PVC's that the deployment uses.  Current PVC's:
+
 *dayz-data-pvc: 100Gi* - Used for the server files.
+
 *dayz-profile-pvc: 50Gi* - The DayZ dedicated server profile for the instance.
+
+*ssh-config-pvc: 1Gi* - Used by the ssh container for things like logs and host ssh key.
 
 ### secrets.yaml
 Creates the secret that contains the ssh username and password.  You have to base64 encode both values.
