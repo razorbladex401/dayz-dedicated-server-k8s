@@ -41,6 +41,7 @@ data:
   BEServer_x64.cfg: |
       RConPassword = "YOUR RCON PASSWORD";
       RestrictRCon = 1;
+      RConPort = 2310;
 kind: ConfigMap
 metadata:
   name: dayz-beserver-cfg

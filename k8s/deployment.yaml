@@ -53,7 +53,7 @@ spec:
             mountPath: "/home/steam/serverDZ.cfg"
             subPath: serverDZ.cfg
           - name: dayz-beserver-cfg
-            mountPath: "/home/steam/dayz/battleye/BEServer_x64.cfg"
+            mountPath: "/home/steam/battleye/BEServer_x64.cfg"
             subPath: BEServer_x64.cfg
         - name: openssh-server
           image: lscr.io/linuxserver/openssh-server:latest
