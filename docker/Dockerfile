@@ -23,8 +23,10 @@ COPY --chown=steam:steam dayz_install.txt /home/steam
 # permissions
 RUN mkdir /home/steam/dayz && \
     mkdir /home/steam/profile && \
+    mkdir /home/steam/battleye && \
     chown -R steam:steam /home/steam
 
+# Exposed Ports
 # game
 EXPOSE 2302/udp
 EXPOSE 2303/udp
@@ -33,14 +35,14 @@ EXPOSE 2305/udp
 # steam
 EXPOSE 8766/udp
 EXPOSE 27016/udp
-# rcon (preferred)
+# rcon
 EXPOSE 2310
 
-# update steamcmd & validate user permissions
+# update steamcmd
 ENV USER steam
 ENV HOME /home/steam
 RUN steamcmd +quit
 
-# reset cmd & define entrypoint
+# define entrypoint
 COPY entry.sh /home/steam/entry.sh
 ENTRYPOINT [ "/home/steam/entry.sh" ]
