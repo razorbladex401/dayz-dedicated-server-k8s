@@ -6,6 +6,8 @@ RUN useradd -m steam \
     && apt-get upgrade -y \
     && apt-get install -y apt-utils \
     && apt-get install -y net-tools \
+    && apt-get install -y nano \
+    && apt-get install -y vim \
     && apt-get install -y \
         lib32gcc1 \
         libcap-dev \
