@@ -37,6 +37,7 @@ RUN mkdir ${HOME}/${game} && \
 
 # Exposed Ports
 # game
+EXPOSE ${PORT}/udp
 EXPOSE 2302/udp
 EXPOSE 2303/udp
 EXPOSE 2304/udp
