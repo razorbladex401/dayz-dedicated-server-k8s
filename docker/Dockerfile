@@ -20,8 +20,6 @@ USER steam
 
 WORKDIR /home/steam
 
-COPY --chown=steam:steam dayz_install.txt /home/steam
-
 # permissions
 RUN mkdir /home/steam/dayz && \
     mkdir /home/steam/profile && \
