@@ -20,7 +20,7 @@ function setupBattleye() {
 
 function startGame() {
 	cd ${HOME}/${GAME}
-	${HOME}/${GAME}/DayZServer -config="${HOME}/serverDZ.cfg" -adminlog -netlog --dologs --freezeCheck -profiles=${HOME}/profile -BEpath=${HOME}/battleye
+	${HOME}/${GAME}/DayZServer -config="${HOME}/serverDZ.cfg" -adminlog -netlog --dologs --freezeCheck -cpuCount=${CPUCOUNT} -port=${PORT} -profiles=${HOME}/profile -BEpath=${HOME}/battleye
 }
 
 updateGame

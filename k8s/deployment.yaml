@@ -64,6 +64,10 @@ spec:
               value: "1042420"
             - name: STEAMACCOUNT
               value: anonymous
+            - name: CPUCOUNT
+              value: "2"
+            - name: PORT
+              value: "2302"
         - name: openssh-server
           image: lscr.io/linuxserver/openssh-server:latest
           imagePullPolicy: Always
