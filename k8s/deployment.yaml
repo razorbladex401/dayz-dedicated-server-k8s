@@ -55,6 +55,15 @@ spec:
           - name: dayz-beserver-cfg
             mountPath: "/home/steam/battleye/BEServer_x64.cfg"
             subPath: BEServer_x64.cfg
+          env:
+            - name: GAME
+              value: dayz
+            - name: HOME
+              value: /home/steam
+            - name: APPID
+              value: "1042420"
+            - name: STEAMACCOUNT
+              value: anonymous
         - name: openssh-server
           image: lscr.io/linuxserver/openssh-server:latest
           imagePullPolicy: Always

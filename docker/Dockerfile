@@ -18,13 +18,20 @@ RUN useradd -m steam \
 
 USER steam
 
+ENV USER steam
+ENV HOME /home/steam
+ENV GAME dayz
+ENV APPID 1042420
+ENV STEAMACCOUNT anonymous
+ENV STEAMPASSWORD
+
 WORKDIR /home/steam
 
 # permissions
-RUN mkdir /home/steam/dayz && \
-    mkdir /home/steam/profile && \
-    mkdir /home/steam/battleye && \
-    chown -R steam:steam /home/steam
+RUN mkdir ${HOME}/${game} && \
+    mkdir ${HOME}/profile && \
+    mkdir ${HOME}/battleye && \
+    chown -R steam:steam ${HOME}
 
 # Exposed Ports
 # game
@@ -39,10 +46,9 @@ EXPOSE 27016/udp
 EXPOSE 2310
 
 # update steamcmd
-ENV USER steam
-ENV HOME /home/steam
 RUN steamcmd +quit
 
 # define entrypoint
-COPY entry.sh /home/steam/entry.sh
-ENTRYPOINT [ "/home/steam/entry.sh" ]
+COPY entry.sh ${HOME}/entry.sh
+
+ENTRYPOINT "${HOME}/entry.sh"

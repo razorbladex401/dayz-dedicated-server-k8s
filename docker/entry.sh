@@ -1,27 +1,26 @@
 #!/bin/bash
 
-
 function updateGame() {
     steamcmd \
-        +login anonymous \
-        +force_install_dir /home/steam/dayz \
-        +app_update 1042420 \
-        +quit 2>&1 /home/steam/steam.log
+        +login ${STEAMACCOUNT} ${STEAMPASSWORD} \
+        +force_install_dir ${HOME}/${GAME} \
+        +app_update ${APPID} \
+        +quit
 }
 
 function setupBattleye() {
-	if [ ! -f /home/steam/battleye/beserver_x64.dll ] || [ ! -f /home/steam/battleye/beserver_x64.so ];then
-		if [ -f /home/steam/dayz/battleye/beserver_x64.dll ] || [ -f /home/steam/dayz/battleye/beserver_x64.so ];then
-			cd /home/steam/battleye
-			ln -s /home/steam/dayz/battleye/beserver_x64.dll
-			ln -s /home/steam/dayz/battleye/beserver_x64.so
+	if [ ! -f ${HOME}/battleye/beserver_x64.dll ] || [ ! -f ${HOME}/battleye/beserver_x64.so ];then
+		if [ -f ${HOME}/${GAME}/battleye/beserver_x64.dll ] || [ -f ${HOME}/${GAME}/battleye/beserver_x64.so ];then
+			cd ${HOME}/battleye
+			ln -s ${HOME}/${GAME}/battleye/beserver_x64.dll
+			ln -s ${HOME}/${GAME}/battleye/beserver_x64.so
 		fi
 	fi
 }
 
 function startGame() {
-	cd /home/steam/dayz
-	/home/steam/dayz/DayZServer -config="/home/steam/serverDZ.cfg" -adminlog -netlog --dologs --freezeCheck -profiles=/home/steam/profile -BEpath=/home/steam/battleye
+	cd ${HOME}/${GAME}
+	${HOME}/${GAME}/DayZServer -config="${HOME}/serverDZ.cfg" -adminlog -netlog --dologs --freezeCheck -profiles=${HOME}/profile -BEpath=${HOME}/battleye
 }
 
 updateGame
