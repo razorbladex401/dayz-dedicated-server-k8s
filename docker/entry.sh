@@ -2,8 +2,8 @@
 
 function updateGame() {
     steamcmd \
+	+force_install_dir ${HOME}/${GAME} \
         +login ${STEAMACCOUNT} ${STEAMPASSWORD} \
-        +force_install_dir ${HOME}/${GAME} \
         +app_update ${APPID} \
         +quit
 }

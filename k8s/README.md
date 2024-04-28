@@ -1,5 +1,5 @@
 # k8s
-This has been tested against Kubernetes v1.23.6 with Metallb v0.12.1 and nfs-subdir-external-provisioner v4.0.13.
+This has been tested against Kubernetes v1.29.4 with Cilium 1.15.4 (in kubeproxyless mode) and nfs-subdir-external-provisioner v4.0.18.
 
 ### configmap.yaml
 Contains the serverDZ.cfg and BEServer_x64.cfg files.  You'll want to add your own configuration here.
@@ -27,7 +27,7 @@ Creates the PVC's that the deployment uses.  Current PVC's:
 Creates the secret that contains the ssh username and password.  You have to base64 encode both values.
 
 ### svc.yaml
-Creates the K8s service that you can use to connect to the pod.  Note that in my environment I'm using metallb in layer2 mode.  This is enough for my configuration but you may have different needs.  The svc.yaml file expects that you will specify the IP for the pod.  It creates two services, one for udp and the other for tcp ports.
+Creates the service with the appropriate ports needed.  Since this is all been tested with cilium you'll want to make sure that you're using a verison that supports loadbalancer type.
 
 ### cronjob.yaml
 Configures the cronjob that triggers a restart of the deployment every X hours.  By default it's set to 12 hours.

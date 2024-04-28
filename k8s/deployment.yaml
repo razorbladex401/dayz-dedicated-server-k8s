@@ -19,15 +19,15 @@ spec:
         app: dayz
     spec:
       volumes:
+        - name: ssh-config
+          persistentVolumeClaim:
+            claimName: ssh-config-pvc
         - name: dayz-data
           persistentVolumeClaim:
             claimName: dayz-data-pvc
         - name: dayz-profile
           persistentVolumeClaim:
             claimName: dayz-profile-pvc
-        - name: ssh-config
-          persistentVolumeClaim:
-            claimName: ssh-config-pvc
         - name: dayz-server-cfg
           configMap:
             name: dayz-server-cfg
@@ -61,11 +61,19 @@ spec:
             - name: HOME
               value: /home/steam
             - name: APPID
-              value: "1042420"
+              value: "223350"
             - name: STEAMACCOUNT
-              value: anonymous
+              valueFrom:
+                secretKeyRef:
+                  name: steamaccount
+                  key: STEAMACCOUNT
+            - name: STEAMPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: steamaccount
+                  key: STEAMPASSWORD
             - name: CPUCOUNT
-              value: "2"
+              value: "4"
             - name: PORT
               value: "2302"
         - name: openssh-server
@@ -82,11 +90,6 @@ spec:
               value: "false"
             - name: PASSWORD_ACCESS
               value: "true"
-            - name: USER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: ssh-sec
-                  key: USER_NAME
             - name: USER_PASSWORD
               valueFrom: 
                 secretKeyRef:

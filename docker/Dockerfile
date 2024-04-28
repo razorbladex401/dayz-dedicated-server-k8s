@@ -8,8 +8,10 @@ RUN useradd -m steam \
     && apt-get install -y net-tools \
     && apt-get install -y nano \
     && apt-get install -y vim \
+    && apt-get install -y netcat \
+    && apt-get install -y dnsutils \
     && apt-get install -y \
-        lib32gcc1 \
+        lib32gcc-s1 \
         libcap-dev \
         libcurl4 \
         libcurl4-openssl-dev \
@@ -21,7 +23,7 @@ USER steam
 ENV USER steam
 ENV HOME /home/steam
 ENV GAME dayz
-ENV APPID 1042420
+ENV APPID 223350
 ENV STEAMACCOUNT anonymous
 ENV STEAMPASSWORD ${1:+1}
 ENV CPUCOUNT 2
@@ -30,7 +32,7 @@ ENV PORT 2302
 WORKDIR /home/steam
 
 # permissions
-RUN mkdir ${HOME}/${game} && \
+RUN mkdir ${HOME}/${GAME} && \
     mkdir ${HOME}/profile && \
     mkdir ${HOME}/battleye && \
     chown -R steam:steam ${HOME}
