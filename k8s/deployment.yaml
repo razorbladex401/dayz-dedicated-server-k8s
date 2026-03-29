@@ -90,6 +90,11 @@ spec:
               value: "false"
             - name: PASSWORD_ACCESS
               value: "true"
+            - name: USER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: ssh-sec
+                  key: USER_NAME
             - name: USER_PASSWORD
               valueFrom: 
                 secretKeyRef:
