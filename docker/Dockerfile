@@ -8,7 +8,7 @@ RUN useradd -m steam \
     && apt-get install -y net-tools \
     && apt-get install -y nano \
     && apt-get install -y vim \
-    && apt-get install -y netcat \
+    && apt-get install -y netcat-openbsd \
     && apt-get install -y dnsutils \
     && apt-get install -y \
         lib32gcc-s1 \
@@ -20,14 +20,14 @@ RUN useradd -m steam \
 
 USER steam
 
-ENV USER steam
-ENV HOME /home/steam
-ENV GAME dayz
-ENV APPID 223350
-ENV STEAMACCOUNT anonymous
-ENV STEAMPASSWORD ${1:+1}
-ENV CPUCOUNT 2
-ENV PORT 2302
+ENV USER=steam
+ENV HOME=/home/steam
+ENV GAME=dayz
+ENV APPID=223350
+ENV STEAMACCOUNT=anonymous
+ENV STEAMPASSWORD=
+ENV CPUCOUNT=2
+ENV PORT=2302
 
 WORKDIR /home/steam
 
@@ -54,6 +54,6 @@ EXPOSE 2310
 RUN steamcmd +quit
 
 # define entrypoint
-COPY entry.sh ${HOME}/entry.sh
+COPY entry-universal.sh ${HOME}/entry.sh
 
 ENTRYPOINT "${HOME}/entry.sh"
