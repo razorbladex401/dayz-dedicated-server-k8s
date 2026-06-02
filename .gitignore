@@ -1,0 +1,27 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets / sensitive files
+private/
+.env*
+*.pem
+*.key
+*.crt
+
+# Logs
+*.log
+
+# Docker
+*.tar
+
+# Temp / misc
+*.tmp
+*.bak

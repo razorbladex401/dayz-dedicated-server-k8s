@@ -20,7 +20,7 @@ function parseModsList() {
 function updateGame() {
     steamcmd \
         +force_install_dir ${HOME}/${GAME} \
-        +login ${STEAMACCOUNT} ${STEAMPASSWORD} \
+        +login ${STEAMACCOUNT} "${STEAMPASSWORD}" \
         +app_update ${APPID} \
         +quit
 }
