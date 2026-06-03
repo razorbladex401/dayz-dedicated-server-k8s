@@ -6,3 +6,5 @@ Will deploy a DayZ Dedicated Server on your K8s cluster.  It deploys the linux s
 
 Docker container based off the steamcmd container.  Read the k8s readme before using.  It is NOT meant to be fully fleshed out but a starting point for your own server.
 
+For Docker entrypoint behavior and environment variables, see [docker/README.md](docker/README.md).
+
