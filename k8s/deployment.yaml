@@ -19,9 +19,6 @@ spec:
         app: dayz
     spec:
       volumes:
-        - name: ssh-config
-          persistentVolumeClaim:
-            claimName: ssh-config-pvc
         - name: dayz-data
           persistentVolumeClaim:
             claimName: dayz-data-pvc
@@ -40,6 +37,9 @@ spec:
             items:
             - key: BEServer_x64.cfg
               path: BEServer_x64.cfg
+        - name: filebrowser-config
+          persistentVolumeClaim:
+            claimName: filebrowser-config-pvc
       containers:
         - name: dayz
           image: razorbladex401/dayz:latest
@@ -62,6 +62,8 @@ spec:
               value: /home/steam
             - name: APPID
               value: "223350"
+            - name: TZ
+              value: "America/New_York"
             - name: STEAMACCOUNT
               valueFrom:
                 secretKeyRef:
@@ -76,40 +78,7 @@ spec:
               value: "4"
             - name: PORT
               value: "2302"
-        - name: openssh-server
-          image: lscr.io/linuxserver/openssh-server:latest
-          imagePullPolicy: Always
-          env:
-            - name: PUID
-              value: "1000"
-            - name: PGID
-              value: "1000"
-            - name: TZ
-              value: "America/New_York"
-            - name: SUDO_ACCESS
-              value: "false"
-            - name: PASSWORD_ACCESS
-              value: "true"
-            - name: USER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: ssh-sec
-                  key: USER_NAME
-            - name: USER_PASSWORD
-              valueFrom: 
-                secretKeyRef:
-                  name: ssh-sec
-                  key: USER_PASSWORD
-          volumeMounts:
-          - mountPath: "/config"
-            name: ssh-config
-          - mountPath: "/home/steam/dayz"
-            name: dayz-data
-          - mountPath: "/home/steam/profile"
-            name: dayz-profile
           ports:
-            - name: ssh
-              containerPort: 2222
             - name: rcon
               containerPort: 2310
             - name: steam-27016
@@ -124,4 +93,31 @@ spec:
               containerPort: 2303
             - name: game-2302
               containerPort: 2302
+        - name: filebrowser
+          image: filebrowser/filebrowser:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              exec filebrowser \
+                --address 0.0.0.0 \
+                --port 8080 \
+                --root /srv \
+                --database /config/filebrowser.db \
+                --noauth
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+          volumeMounts:
+          - mountPath: /srv/dayz
+            name: dayz-data
+          - mountPath: /srv/profile
+            name: dayz-profile
+          - mountPath: /config
+            name: filebrowser-config
+          ports:
+            - name: filebrowser
+              containerPort: 8080
 

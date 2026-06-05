@@ -29,7 +29,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   namespace: dayz
-  name: ssh-config-pvc
+  name: filebrowser-config-pvc
 spec:
   accessModes:
     - ReadWriteOnce
