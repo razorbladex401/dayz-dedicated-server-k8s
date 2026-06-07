@@ -1,0 +1,944 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dayz-status-page
+  namespace: dayz
+data:
+  app.py: |
+    import json
+    import os
+    import re
+    import shutil
+    import socket
+    import subprocess
+    import time
+    import zlib
+    from datetime import datetime, timezone
+    from html import escape
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from pathlib import Path
+
+    START_TIME = time.time()
+    SERVER_CFG = Path('/config/serverDZ.cfg')
+    MOD_ROOT = Path('/srv/dayz')
+    PROFILE_ROOT = Path('/srv/profile')
+    RCON_HOST = os.getenv('RCON_HOST', '127.0.0.1')
+    RCON_POD_IP = os.getenv('POD_IP', '')
+    RCON_PORT = int(os.getenv('RCON_PORT', '2310'))
+    RCON_TIMEOUT = float(os.getenv('RCON_TIMEOUT', '1.5'))
+    RCON_PASSWORD = os.getenv('RCON_PASSWORD', '').strip()
+    RCON_TRANSPORT = os.getenv('RCON_TRANSPORT', 'auto').strip().lower()
+    BERCON_ENABLE = os.getenv('BERCON_ENABLE', 'true').strip().lower() == 'true'
+    BERCON_BIN = os.getenv('BERCON_BIN', '/usr/local/bin/bercon-cli').strip()
+
+
+    def read_hostname():
+      if not SERVER_CFG.exists():
+        return 'unknown'
+      text = SERVER_CFG.read_text(errors='ignore')
+      match = re.search(r'^\s*hostname\s*=\s*"([^"]*)"\s*;', text, re.MULTILINE)
+      return match.group(1) if match else 'unknown'
+
+
+    def parse_mod_id(path_text):
+      match = re.search(r'/221100/(\d+)(?:/|$)', path_text)
+      return match.group(1) if match else 'unknown'
+
+
+    def read_mission_name():
+      if not SERVER_CFG.exists():
+        return 'unknown'
+      text = SERVER_CFG.read_text(errors='ignore')
+      match = re.search(r'^\s*template\s*=\s*"([^"]+)"\s*;', text, re.MULTILINE)
+      return match.group(1) if match else 'unknown'
+
+
+    def loaded_mods():
+      if not MOD_ROOT.exists():
+        return []
+
+      mods = []
+      for entry in sorted(MOD_ROOT.iterdir(), key=lambda p: p.name.lower()):
+        if not entry.name.startswith('@'):
+          continue
+
+        mod_name = entry.name[1:]
+        mod_id = 'unknown'
+
+        try:
+          link_target = os.readlink(entry)
+          mod_id = parse_mod_id(link_target)
+        except OSError:
+          pass
+
+        if mod_id == 'unknown':
+          try:
+            mod_id = parse_mod_id(str(entry.resolve()))
+          except OSError:
+            pass
+
+        mods.append({'id': mod_id, 'name': mod_name})
+
+      return mods
+
+
+    def human_duration(seconds):
+      seconds = max(0, int(seconds))
+      days, rem = divmod(seconds, 86400)
+      hours, rem = divmod(rem, 3600)
+      minutes, secs = divmod(rem, 60)
+      parts = []
+      if days:
+        parts.append(f'{days}d')
+      if hours or days:
+        parts.append(f'{hours}h')
+      if minutes or hours or days:
+        parts.append(f'{minutes}m')
+      parts.append(f'{secs}s')
+      return ' '.join(parts)
+
+
+    def discover_logged_in_users_from_logs():
+      if not PROFILE_ROOT.exists():
+        return [], 'profile directory not mounted'
+
+      candidates = [
+        PROFILE_ROOT / 'server_console.log',
+      ]
+
+      # Keep a few profile logs as fallback sources.
+      for pattern in ('*.ADM', '*.log'):
+        for p in sorted(PROFILE_ROOT.glob(pattern))[-5:]:
+          if p not in candidates:
+            candidates.append(p)
+
+      connected = {}
+      parsed_any = False
+      connect_patterns = [
+        re.compile(r'Player\s+"([^"]+)".*(?:is\s+connected|connected)', re.IGNORECASE),
+        re.compile(r'"([^"]+)"\s+connected', re.IGNORECASE),
+      ]
+      disconnect_patterns = [
+        re.compile(r'Player\s+"([^"]+)".*(?:is\s+disconnected|disconnected)', re.IGNORECASE),
+        re.compile(r'"([^"]+)"\s+disconnected', re.IGNORECASE),
+      ]
+
+      for file_path in candidates:
+        if not file_path.exists() or not file_path.is_file():
+          continue
+        try:
+          text = file_path.read_text(errors='ignore')
+        except OSError:
+          continue
+
+        parsed_any = True
+        for line in text.splitlines():
+          for pat in connect_patterns:
+            match = pat.search(line)
+            if match:
+              connected[match.group(1)] = True
+              break
+          for pat in disconnect_patterns:
+            match = pat.search(line)
+            if match:
+              connected.pop(match.group(1), None)
+              break
+
+      if not parsed_any:
+        return [], 'no readable player logs found'
+
+      return sorted(connected.keys(), key=str.lower), 'profile log parse (best effort)'
+
+
+    def be_wrap(payload):
+      crc = zlib.crc32(payload) & 0xFFFFFFFF
+      return b'BE' + crc.to_bytes(4, 'little') + payload
+
+
+    def be_unwrap(packet):
+      if len(packet) < 7 or not packet.startswith(b'BE'):
+        return None
+      received_crc = int.from_bytes(packet[2:6], 'little')
+      payload = packet[6:]
+      if (zlib.crc32(payload) & 0xFFFFFFFF) != received_crc:
+        return None
+      return payload
+
+
+    def recv_command_response(sock, expected_seq):
+      deadline = time.time() + RCON_TIMEOUT
+      parts = {}
+
+      while time.time() < deadline:
+        timeout_left = deadline - time.time()
+        sock.settimeout(max(0.05, timeout_left))
+        try:
+          packet, _ = sock.recvfrom(65535)
+        except socket.timeout:
+          break
+
+        payload = be_unwrap(packet)
+        if not payload or len(payload) < 4:
+          continue
+
+        # Command response: 0xFF 0x01 <seq> <body>
+        if payload[0] != 0xFF or payload[1] != 0x01:
+          continue
+        if payload[2] != expected_seq:
+          continue
+
+        # Multi-packet payload: <0x00><total><index><chunk>
+        if payload[3] == 0x00 and len(payload) >= 6:
+          total = payload[4]
+          index = payload[5]
+          parts[index] = payload[6:].decode('utf-8', errors='ignore')
+          if len(parts) >= total:
+            break
+          continue
+
+        return payload[3:].decode('utf-8', errors='ignore')
+
+      if parts:
+        return ''.join(parts[idx] for idx in sorted(parts.keys()))
+      return ''
+
+
+    def recv_stream_packet(sock):
+      # TCP may coalesce packets; read chunks until we can unwrap one full packet.
+      deadline = time.time() + RCON_TIMEOUT
+      buf = b''
+      while time.time() < deadline:
+        timeout_left = deadline - time.time()
+        sock.settimeout(max(0.05, timeout_left))
+        try:
+          chunk = sock.recv(65535)
+        except socket.timeout:
+          break
+        if not chunk:
+          break
+        buf += chunk
+        payload = be_unwrap(buf)
+        if payload is not None:
+          return payload
+      return None
+
+
+    def parse_players_details_output(text):
+      if not text or not text.strip():
+        return []
+
+      details = []
+      seen = set()
+      for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+          continue
+        if line.lower().startswith('players on server'):
+          continue
+        if 'guid' in line.lower() and 'ip' in line.lower():
+          continue
+
+        # Common BattlEye format: <id> <ip:port> <ping> <guid> <name>
+        match = re.match(r'^\s*(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(.+)$', line)
+        if match:
+          player = {
+            'name': match.group(5).strip().strip('"'),
+            'id': int(match.group(1)),
+            'ip_port': match.group(2),
+            'ping': int(match.group(3)),
+            'guid': match.group(4),
+            'source': 'rcon',
+          }
+          key = (player.get('name', ''), player.get('guid', ''), player.get('ip_port', ''), player.get('id', -1))
+          if key not in seen and player.get('name'):
+            seen.add(key)
+            details.append(player)
+          continue
+
+        quoted = re.search(r'"([^"]+)"', line)
+        if quoted:
+          name = quoted.group(1).strip()
+          key = (name, '', '', -1)
+          if name and key not in seen:
+            seen.add(key)
+            details.append({'name': name, 'source': 'rcon'})
+
+      details.sort(key=lambda x: str(x.get('name', '')).lower())
+      return details
+
+
+    def parse_players_output(text):
+      return [item['name'] for item in parse_players_details_output(text) if item.get('name')]
+
+
+    def rcon_host_candidates():
+      hosts = []
+      for host in (RCON_HOST, '127.0.0.1', 'localhost', RCON_POD_IP):
+        host = (host or '').strip()
+        if host and host not in hosts:
+          hosts.append(host)
+      return hosts
+
+
+    def query_players_via_rcon(host, transport):
+      if transport == 'udp':
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(RCON_TIMEOUT)
+        addr = (host, RCON_PORT)
+
+        try:
+          login_payload = b'\xFF\x00' + RCON_PASSWORD.encode('utf-8')
+          sock.sendto(be_wrap(login_payload), addr)
+
+          login_packet, _ = sock.recvfrom(65535)
+          login_reply = be_unwrap(login_packet)
+          if not login_reply or len(login_reply) < 3 or login_reply[0] != 0xFF or login_reply[1] != 0x00:
+            raise RuntimeError('invalid login reply')
+          if login_reply[2] != 0x01:
+            raise RuntimeError('bad password')
+
+          seq = int(time.time() * 1000) & 0xFF
+          cmd_payload = b'\xFF\x01' + bytes([seq]) + b'players'
+          sock.sendto(be_wrap(cmd_payload), addr)
+          output = recv_command_response(sock, seq)
+          if not output.strip():
+            raise RuntimeError('empty players reply')
+          users = parse_players_output(output)
+          return users
+        finally:
+          sock.close()
+
+      if transport == 'tcp':
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(RCON_TIMEOUT)
+        addr = (host, RCON_PORT)
+
+        try:
+          sock.connect(addr)
+
+          login_payload = b'\xFF\x00' + RCON_PASSWORD.encode('utf-8')
+          sock.sendall(be_wrap(login_payload))
+          login_reply = recv_stream_packet(sock)
+          if not login_reply or len(login_reply) < 3 or login_reply[0] != 0xFF or login_reply[1] != 0x00:
+            raise RuntimeError('invalid login reply')
+          if login_reply[2] != 0x01:
+            raise RuntimeError('bad password')
+
+          seq = int(time.time() * 1000) & 0xFF
+          cmd_payload = b'\xFF\x01' + bytes([seq]) + b'players'
+          sock.sendall(be_wrap(cmd_payload))
+          output_reply = recv_stream_packet(sock)
+          if not output_reply or len(output_reply) < 4:
+            raise RuntimeError('empty players reply')
+          if output_reply[0] != 0xFF or output_reply[1] != 0x01 or output_reply[2] != seq:
+            raise RuntimeError('unexpected players reply')
+          output = output_reply[3:].decode('utf-8', errors='ignore')
+          users = parse_players_output(output)
+          return users
+        finally:
+          sock.close()
+
+      raise RuntimeError(f'unsupported transport: {transport}')
+
+
+    def rcon_transports():
+      if RCON_TRANSPORT in ('udp', 'tcp'):
+        return [RCON_TRANSPORT]
+      return ['udp']
+
+
+    def bercon_bin_path():
+      if BERCON_BIN:
+        candidate = Path(BERCON_BIN)
+        if candidate.exists() and os.access(candidate, os.X_OK):
+          return str(candidate)
+      located = shutil.which('bercon-cli')
+      return located or ''
+
+
+    def parse_bercon_player_details(stdout_text):
+      data = json.loads(stdout_text)
+      raw_players = []
+
+      if isinstance(data, list):
+        raw_players = data
+      elif isinstance(data, dict):
+        players = data.get('players')
+        if isinstance(players, list):
+          raw_players = players
+
+      details = []
+      seen = set()
+      for item in raw_players:
+        if not isinstance(item, dict):
+          continue
+
+        name = str(item.get('name', '')).strip()
+        if not name:
+          continue
+
+        player = {'name': name, 'source': 'bercon-cli'}
+        if item.get('id') is not None:
+          player['id'] = item.get('id')
+        if item.get('guid'):
+          player['guid'] = str(item.get('guid')).strip()
+
+        ip_candidate = item.get('ip') or item.get('address') or item.get('endpoint')
+        if ip_candidate:
+          player['ip_port'] = str(ip_candidate).strip()
+
+        if item.get('ping') is not None:
+          player['ping'] = item.get('ping')
+
+        key = (player.get('name', ''), player.get('guid', ''), player.get('ip_port', ''), player.get('id', -1))
+        if key not in seen:
+          seen.add(key)
+          details.append(player)
+
+      details.sort(key=lambda x: str(x.get('name', '')).lower())
+      return details
+
+
+    def parse_bercon_players(stdout_text):
+      return [item['name'] for item in parse_bercon_player_details(stdout_text) if item.get('name')]
+
+
+    def run_bercon_players(host):
+      binary = bercon_bin_path()
+      if not binary:
+        raise RuntimeError('bercon-cli not installed')
+
+      timeout_seconds = max(2, int(RCON_TIMEOUT) + 1)
+      cmd = [
+        binary,
+        '--format=json',
+        '--ip', host,
+        '--port', str(RCON_PORT),
+        '--password', RCON_PASSWORD,
+        '--timeout', str(max(1, int(RCON_TIMEOUT))),
+        'players',
+      ]
+
+      result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds, check=False)
+      stdout_text = (result.stdout or '').strip()
+      stderr_text = (result.stderr or '').strip()
+
+      if result.returncode != 0:
+        raise RuntimeError(stderr_text or stdout_text or f'exit code {result.returncode}')
+      if not stdout_text:
+        return ''
+
+      return stdout_text
+
+
+    def query_players_via_bercon(host):
+      stdout_text = run_bercon_players(host)
+
+      try:
+        return parse_bercon_players(stdout_text)
+      except json.JSONDecodeError:
+        return parse_players_output(stdout_text)
+
+
+    def query_player_details_via_bercon(host):
+      stdout_text = run_bercon_players(host)
+
+      try:
+        return parse_bercon_player_details(stdout_text)
+      except json.JSONDecodeError:
+        return parse_players_details_output(stdout_text)
+
+
+    def discover_logged_in_users_via_rcon():
+      if not RCON_PASSWORD:
+        return [], 'rcon password not configured'
+
+      errors = []
+      for host in rcon_host_candidates():
+        for transport in rcon_transports():
+          try:
+            users = query_players_via_rcon(host, transport)
+            return users, f'rcon players command via {transport.upper()} {host}:{RCON_PORT}'
+          except (OSError, ValueError, RuntimeError) as exc:
+            errors.append(f'{transport.upper()} {host}: {exc}')
+
+      if BERCON_ENABLE:
+        for host in rcon_host_candidates():
+          try:
+            users = query_players_via_bercon(host)
+            return users, f'bercon-cli players command via {host}:{RCON_PORT}'
+          except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            errors.append(f'BERCON {host}: {exc}')
+
+      if errors:
+        return [], f'rcon unavailable: {" | ".join(errors)}'
+      return [], 'rcon unavailable: no host candidates'
+
+
+    def check_battleye_files():
+      # The status sidecar cannot see /home/steam from the dayz container directly.
+      # Check mounted equivalents instead:
+      # - BattlEye config: on Linux, lowercase beserver_x64.cfg (or beserver_x64_active_*.cfg)
+      # - BattlEye binaries from dayz-data at /srv/dayz/battleye/
+      from glob import glob
+
+      # Look for Linux lowercase cfg and active session variants
+      cfg_candidates = [
+        Path('/battleye/beserver_x64.cfg'),
+        Path('/battleye/beserver_x64_active.cfg'),
+      ]
+      # Also check for beserver_x64_active_*.cfg (BattlEye's renamed session file)
+      cfg_candidates.extend(Path('/battleye').glob('beserver_x64_active_*.cfg') if Path('/battleye').exists() else [])
+
+      so_path = Path('/srv/dayz/battleye/beserver_x64.so')
+      dll_paths = [
+        Path('/srv/dayz/battleye/beserver_x64.dll'),
+        Path('/srv/dayz/battleye/BEServer_x64.dll'),
+      ]
+
+      found = []
+      missing = []
+
+      # Check for any cfg file
+      existing_cfg = next((p for p in cfg_candidates if p.exists()), None)
+      if existing_cfg:
+        found.append(str(existing_cfg))
+      else:
+        missing.append('/battleye/beserver_x64*.cfg')
+
+      if so_path.exists():
+        found.append(str(so_path))
+      else:
+        missing.append(str(so_path))
+
+      existing_dll = next((p for p in dll_paths if p.exists()), None)
+      if existing_dll:
+        found.append(str(existing_dll))
+      else:
+        missing.append(str(dll_paths[0]))
+
+      return {
+        'found': found,
+        'missing': missing,
+        'ok': existing_cfg is not None and (so_path.exists() or existing_dll is not None),
+      }
+
+
+    def check_rcon_listener():
+      # Since RCON functionality is already tested via actual player queries,
+      # listener checks are informational only. BattlEye only uses UDP.
+      hosts = rcon_host_candidates()
+      checks = []
+      check_timeout = 2.0  # Timeout for connectivity test
+
+      for host in hosts:
+        host_result = {'host': host, 'udp': False, 'udp_error': ''}
+
+        # UDP: test if we can send a packet (BattlEye only uses UDP)
+        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp_sock.settimeout(check_timeout)
+        try:
+          udp_sock.sendto(be_wrap(b'\xFF\x00'), (host, RCON_PORT))
+          host_result['udp'] = True  # Successfully sent
+        except OSError as exc:
+          host_result['udp_error'] = str(exc)
+        finally:
+          udp_sock.close()
+
+        checks.append(host_result)
+
+      # Listener checks are informational; actual RCON functionality is already tested
+      ok = any(item['udp'] for item in checks)
+      return {'ok': ok, 'checks': checks}
+
+
+    def battleye_readiness(rcon_source):
+      files = check_battleye_files()
+      listener = check_rcon_listener()
+
+      status = 'ready' if (files['ok'] and listener['ok']) else 'not ready'
+      rcon_succeeded = rcon_source.startswith('rcon players command') or rcon_source.startswith('bercon-cli players command')
+      if rcon_succeeded:
+        status = 'ready'
+
+      # If RCON succeeded, don't report file/listener issues as blockers
+      # since we've already proven the server is responsive
+      reasons = []
+      if not rcon_succeeded:
+        if not files['ok']:
+          reasons.append('missing BattlEye files')
+        if not listener['ok']:
+          reasons.append('no local RCON listener response')
+      if rcon_source.startswith('rcon unavailable') or rcon_source.startswith('rcon login failed'):
+        reasons.append(rcon_source)
+
+      return {
+        'status': status,
+        'files': files,
+        'listener': listener,
+        'reasons': reasons,
+      }
+
+
+    def build_status():
+      mods = loaded_mods()
+      users, source = discover_logged_in_users_via_rcon()
+      if source.startswith('rcon unavailable') or source.startswith('rcon login failed') or source.startswith('rcon password not configured'):
+        fallback_users, fallback_source = discover_logged_in_users_from_logs()
+        if fallback_users:
+          users = fallback_users
+        source = f'{source}; fallback: {fallback_source}'
+
+      user_details = [{'name': name, 'source': 'status'} for name in users]
+      if source.startswith('bercon-cli players command via '):
+        host_part = source.split('via ', 1)[-1]
+        host = host_part.rsplit(':', 1)[0].strip() if ':' in host_part else host_part.strip()
+        try:
+          detailed = query_player_details_via_bercon(host)
+          if detailed:
+            user_details = detailed
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError):
+          pass
+
+      be = battleye_readiness(source)
+      uptime_seconds = int(time.time() - START_TIME)
+      return {
+        'hostname': read_hostname(),
+        'mission': read_mission_name(),
+        'mods': mods,
+        'mod_count': len(mods),
+        'logged_in_users': users,
+        'logged_in_count': len(users),
+        'logged_in_user_details': user_details,
+        'logged_in_source': source,
+        'battleye': be,
+        'uptime_seconds': uptime_seconds,
+        'uptime_human': human_duration(uptime_seconds),
+        'generated_at_utc': datetime.now(timezone.utc).isoformat(),
+      }
+
+
+    def render_html(payload):
+      rows = ''.join(
+        f"<tr><td>{escape(mod['id'])}</td><td>{escape(mod['name'])}</td></tr>"
+        for mod in payload['mods']
+      )
+      if not rows:
+        rows = '<tr><td colspan="2">No loaded mods detected yet.</td></tr>'
+
+      users = ''.join(
+        f'<li>{escape(name)}</li>'
+        for name in payload['logged_in_users']
+      )
+      if not users:
+        users = '<li>No active players detected.</li>'
+
+      user_details_rows = ''
+      for item in payload.get('logged_in_user_details', []):
+        user_details_rows += (
+          f"<tr><td>{escape(str(item.get('name', '')))}</td>"
+          f"<td>{escape(str(item.get('id', '')))}</td>"
+          f"<td>{escape(str(item.get('ping', '')))}</td>"
+          f"<td>{escape(str(item.get('guid', '')))}</td>"
+          f"<td>{escape(str(item.get('ip_port', '')))}</td>"
+          f"<td>{escape(str(item.get('source', '')))}</td></tr>"
+        )
+      if not user_details_rows:
+        user_details_rows = '<tr><td colspan="6">No detailed player data available.</td></tr>'
+
+      be = payload['battleye']
+      be_status = 'READY' if be['status'] == 'ready' else 'NOT READY'
+      be_reasons = ''.join(f'<li>{escape(reason)}</li>' for reason in be['reasons']) or '<li>No blockers detected.</li>'
+      be_files_missing = ''.join(f'<li>{escape(path)}</li>' for path in be['files']['missing']) or '<li>None</li>'
+
+      listener_rows = ''
+      for item in be['listener']['checks']:
+        udp_cell = 'ok' if item['udp'] else f"fail ({escape(item['udp_error'])})"
+        listener_rows += f"<tr><td>{escape(item['host'])}</td><td>{udp_cell}</td></tr>"
+      if not listener_rows:
+        listener_rows = '<tr><td colspan="2">No listener checks run.</td></tr>'
+
+      return f'''<!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>DayZ Server Status</title>
+        <style>
+          :root {{
+            --bg: #0e1318;
+            --panel: #171f27;
+            --text: #e6edf5;
+            --accent: #6cc2a0;
+            --muted: #9fb0c2;
+            --border: #2c3948;
+          }}
+          body.theme-light {{
+            --bg: #f4efe2;
+            --panel: #fffaf0;
+            --text: #1f1a12;
+            --accent: #2f6f4f;
+            --muted: #6f6657;
+            --border: #dccfb7;
+          }}
+          body {{
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            background: radial-gradient(circle at top, #1a2531 0%, var(--bg) 65%);
+            color: var(--text);
+          }}
+          body.theme-light {{
+            background: radial-gradient(circle at top, #fff8e8 0%, var(--bg) 65%);
+          }}
+          .wrap {{ max-width: 980px; margin: 32px auto; padding: 0 16px; }}
+          .card {{
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+            padding: 20px;
+            margin-bottom: 16px;
+          }}
+          body.theme-light .card {{
+            box-shadow: 0 10px 30px rgba(34, 26, 14, 0.08);
+          }}
+          h1 {{ margin: 0 0 8px; }}
+          .meta {{ color: var(--muted); }}
+          .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }}
+          .stat {{ border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: #1e2833; }}
+          body.theme-light .stat {{ background: #fff; }}
+          .label {{ font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }}
+          .value {{ font-size: 20px; margin-top: 6px; color: var(--accent); }}
+          table {{ width: 100%; border-collapse: collapse; }}
+          th, td {{ border-bottom: 1px solid var(--border); text-align: left; padding: 8px; }}
+          th {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }}
+          ul {{ margin: 0; padding-left: 18px; }}
+          .topbar {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; }}
+          .theme-toggle {{
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text);
+            border-radius: 999px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+          }}
+          .theme-toggle:hover {{ border-color: var(--accent); color: var(--accent); }}
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="card">
+            <div class="topbar">
+              <h1>DayZ Server Status</h1>
+              <button id="theme-toggle" class="theme-toggle" type="button">Switch To Light</button>
+            </div>
+            <div class="meta">Last refreshed: {escape(payload['generated_at_utc'])}</div>
+          </div>
+          <div class="card grid">
+            <div class="stat"><div class="label">Hostname</div><div class="value">{escape(payload['hostname'])}</div></div>
+            <div class="stat"><div class="label">Mission</div><div class="value">{escape(payload['mission'])}</div></div>
+            <div class="stat"><div class="label">Loaded Mods</div><div class="value">{payload['mod_count']}</div></div>
+            <div class="stat"><div class="label">Logged In Players</div><div class="value">{payload['logged_in_count']}</div></div>
+            <div class="stat"><div class="label">Status Page Uptime</div><div class="value">{escape(payload['uptime_human'])}</div></div>
+          </div>
+          <div class="card">
+            <h2>BattlEye Readiness</h2>
+            <div class="grid">
+              <div class="stat"><div class="label">Status</div><div class="value">{be_status}</div></div>
+              <div class="stat"><div class="label">RCON Source</div><div class="value">{escape(payload['logged_in_source'])}</div></div>
+            </div>
+            <h3>Blocking Reasons</h3>
+            <ul>{be_reasons}</ul>
+            <h3>Missing BattlEye Files</h3>
+            <ul>{be_files_missing}</ul>
+            <h3>RCON Listener Checks ({RCON_PORT})</h3>
+            <table>
+              <thead><tr><th>Host</th><th>UDP</th></tr></thead>
+              <tbody>{listener_rows}</tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h2>Logged In Users</h2>
+            <ul>{users}</ul>
+            <div class="meta">Source: {escape(payload['logged_in_source'])}</div>
+            <h3>Player Details</h3>
+            <table>
+              <thead><tr><th>Name</th><th>ID</th><th>Ping</th><th>GUID</th><th>IP:Port</th><th>Source</th></tr></thead>
+              <tbody>{user_details_rows}</tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h2>Loaded Mods</h2>
+            <table>
+              <thead><tr><th>Workshop ID</th><th>Name</th></tr></thead>
+              <tbody>{rows}</tbody>
+            </table>
+          </div>
+        </div>
+        <script>
+          (function () {{
+            var KEY = 'dayz-status-theme';
+            var btn = document.getElementById('theme-toggle');
+            if (!btn) return;
+
+            function setTheme(theme) {{
+              var isLight = theme === 'light';
+              document.body.classList.toggle('theme-light', isLight);
+              btn.textContent = isLight ? 'Switch To Dark' : 'Switch To Light';
+            }}
+
+            var saved = localStorage.getItem(KEY) || 'dark';
+            setTheme(saved);
+
+            btn.addEventListener('click', function () {{
+              var next = document.body.classList.contains('theme-light') ? 'dark' : 'light';
+              localStorage.setItem(KEY, next);
+              setTheme(next);
+            }});
+          }})();
+        </script>
+      </body>
+    </html>
+    '''
+
+
+    class Handler(BaseHTTPRequestHandler):
+      def do_GET(self):
+        if self.path == '/healthz':
+          self.send_response(200)
+          self.send_header('Content-Type', 'text/plain; charset=utf-8')
+          self.end_headers()
+          self.wfile.write(b'ok')
+          return
+
+        if self.path == '/debug':
+          debug_info = {'rcon_tests': [], 'bercon_tests': [], 'config': {
+            'RCON_PASSWORD_SET': bool(RCON_PASSWORD),
+            'RCON_HOST': RCON_HOST,
+            'RCON_PORT': RCON_PORT,
+            'RCON_TIMEOUT': RCON_TIMEOUT,
+            'RCON_TRANSPORT': RCON_TRANSPORT,
+            'POD_IP': RCON_POD_IP,
+            'BERCON_ENABLE': BERCON_ENABLE,
+            'BERCON_BIN': BERCON_BIN,
+          }}
+          
+          if not RCON_PASSWORD:
+            debug_info['error'] = 'RCON_PASSWORD not configured'
+          else:
+            for host in rcon_host_candidates():
+              for transport in rcon_transports():
+                try:
+                  # Test raw query to see actual response
+                  if transport == 'udp':
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.settimeout(RCON_TIMEOUT)
+                    try:
+                      login_payload = b'\xFF\x00' + RCON_PASSWORD.encode('utf-8')
+                      sock.sendto(be_wrap(login_payload), (host, RCON_PORT))
+                      login_packet, _ = sock.recvfrom(65535)
+                      login_reply = be_unwrap(login_packet)
+                      if not login_reply or login_reply[2] != 0x01:
+                        raise RuntimeError('Authentication failed')
+                      
+                      seq = int(time.time() * 1000) & 0xFF
+                      cmd_payload = b'\xFF\x01' + bytes([seq]) + b'players'
+                      sock.sendto(be_wrap(cmd_payload), (host, RCON_PORT))
+                      output = recv_command_response(sock, seq)
+                      if not output.strip():
+                        raise RuntimeError('empty players reply')
+                      users = parse_players_output(output)
+                      debug_info['rcon_tests'].append({
+                        'host': host,
+                        'transport': transport,
+                        'status': 'success',
+                        'player_count': len(users),
+                        'players': users,
+                        'raw_response': output[:500],  # First 500 chars
+                      })
+                    finally:
+                      sock.close()
+                  else:
+                    users = query_players_via_rcon(host, transport)
+                    debug_info['rcon_tests'].append({
+                      'host': host,
+                      'transport': transport,
+                      'status': 'success',
+                      'player_count': len(users),
+                      'players': users,
+                    })
+                except Exception as exc:
+                  debug_info['rcon_tests'].append({
+                    'host': host,
+                    'transport': transport,
+                    'status': 'failed',
+                    'error': str(exc),
+                  })
+
+            if BERCON_ENABLE:
+              for host in rcon_host_candidates():
+                try:
+                  users = query_players_via_bercon(host)
+                  debug_info['bercon_tests'].append({
+                    'host': host,
+                    'status': 'success',
+                    'player_count': len(users),
+                    'players': users,
+                  })
+                except Exception as exc:
+                  debug_info['bercon_tests'].append({
+                    'host': host,
+                    'status': 'failed',
+                    'error': str(exc),
+                  })
+
+            log_users, log_source = discover_logged_in_users_from_logs()
+            debug_info['log_fallback'] = {
+              'source': log_source,
+              'player_count': len(log_users),
+              'players': log_users,
+            }
+
+            effective_payload = build_status()
+            debug_info['effective_status'] = {
+              'logged_in_count': effective_payload.get('logged_in_count', 0),
+              'logged_in_users': effective_payload.get('logged_in_users', []),
+              'logged_in_user_details': effective_payload.get('logged_in_user_details', []),
+              'logged_in_source': effective_payload.get('logged_in_source', 'unknown'),
+            }
+          
+          body = json.dumps(debug_info, indent=2).encode('utf-8')
+          self.send_response(200)
+          self.send_header('Content-Type', 'application/json; charset=utf-8')
+          self.send_header('Cache-Control', 'no-store')
+          self.end_headers()
+          self.wfile.write(body)
+          return
+
+        payload = build_status()
+
+        if self.path == '/api/status':
+          body = json.dumps(payload, indent=2).encode('utf-8')
+          self.send_response(200)
+          self.send_header('Content-Type', 'application/json; charset=utf-8')
+          self.send_header('Cache-Control', 'no-store')
+          self.end_headers()
+          self.wfile.write(body)
+          return
+
+        page = render_html(payload).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(page)
+
+      def log_message(self, fmt, *args):
+        return
+
+
+    if __name__ == '__main__':
+      HTTPServer(('0.0.0.0', 8090), Handler).serve_forever()

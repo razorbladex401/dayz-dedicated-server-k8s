@@ -5,7 +5,7 @@ metadata:
   namespace: dayz
 spec:
   concurrencyPolicy: Forbid
-  schedule: '0 */4 * * *' # Run every 4 hours
+  schedule: '0 */5 * * *' # Run every 5 hours
   jobTemplate:
     spec:
       backoffLimit: 2

@@ -67,9 +67,11 @@ metadata:
 apiVersion: v1
 data:
   BEServer_x64.cfg: |
-      RConPassword = "YOUR RCON PASSWORD";
-      RestrictRCon = 1;
-      RConPort = 2310;
+      RConPassword __RCON_PASSWORD__
+      RestrictRCon 0
+      RConPort 2310
+      LogFile /home/steam/profile/BEServer.log
+      RConIp 0.0.0.0
 kind: ConfigMap
 metadata:
   name: dayz-beserver-cfg

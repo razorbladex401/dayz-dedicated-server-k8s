@@ -7,17 +7,13 @@ metadata:
   namespace: dayz
 spec:
   ports:
-    - name: ssh
-      port: 2222
-      targetPort: 2222
-      protocol: TCP
     - name: steam-tcp
       port: 27016
       protocol: TCP
       targetPort: 27016
     - name: rcon
       port: 2310
-      protocol: TCP
+      protocol: UDP
       targetPort: 2310
     - name: steam
       port: 27016
