@@ -8,6 +8,7 @@ RUN useradd -m steam \
     && apt-get install -y net-tools \
     && apt-get install -y nano \
     && apt-get install -y vim \
+    && apt-get install -y curl \
     && apt-get install -y netcat-openbsd \
     && apt-get install -y dnsutils \
     && apt-get install -y \
@@ -15,8 +16,15 @@ RUN useradd -m steam \
         libcap-dev \
         libcurl4 \
         libcurl4-openssl-dev \
+	libssl-dev \
+	libtbbmalloc2 \
     && apt-get autoremove \
     && rm -rf /var/lib/apt/lists/*
+
+# Install bercon-cli
+RUN curl -#SfLo /usr/bin/bercon-cli \
+  https://github.com/WoozyMasta/bercon-cli/releases/latest/download/bercon-cli-linux-amd64
+RUN chmod +x /usr/bin/bercon-cli
 
 USER steam
 

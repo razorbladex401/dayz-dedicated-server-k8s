@@ -11,6 +11,10 @@ spec:
       port: 8080
       targetPort: 8080
       protocol: TCP
+    - name: status
+      port: 8090
+      targetPort: 8090
+      protocol: TCP
   selector:
     app: dayz
   type: LoadBalancer

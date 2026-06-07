@@ -37,9 +37,43 @@ spec:
             items:
             - key: BEServer_x64.cfg
               path: BEServer_x64.cfg
+        - name: dayz-beserver-generated
+          emptyDir: {}
         - name: filebrowser-config
           persistentVolumeClaim:
             claimName: filebrowser-config-pvc
+        - name: dayz-status-page
+          configMap:
+            name: dayz-status-page
+            items:
+            - key: app.py
+              path: app.py
+      initContainers:
+        - name: render-beserver-cfg
+          image: python:3.12-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              from pathlib import Path
+              import os
+
+              template = Path('/template/BEServer_x64.cfg').read_text()
+              password = os.environ['RCON_PASSWORD']
+              Path('/work/BEServer_x64.cfg').write_text(template.replace('__RCON_PASSWORD__', password))
+          env:
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dayz-rcon
+                  key: RCON_PASSWORD
+          volumeMounts:
+            - name: dayz-beserver-cfg
+              mountPath: /template
+              readOnly: true
+            - name: dayz-beserver-generated
+              mountPath: /work
       containers:
         - name: dayz
           image: razorbladex401/dayz:latest
@@ -52,9 +86,8 @@ spec:
           - name: dayz-server-cfg
             mountPath: "/home/steam/serverDZ.cfg"
             subPath: serverDZ.cfg
-          - name: dayz-beserver-cfg
-            mountPath: "/home/steam/battleye/BEServer_x64.cfg"
-            subPath: BEServer_x64.cfg
+          - name: dayz-beserver-generated
+            mountPath: "/home/steam/battleye"
           env:
             - name: GAME
               value: dayz
@@ -120,4 +153,59 @@ spec:
           ports:
             - name: filebrowser
               containerPort: 8080
+        - name: dayz-status
+          image: python:3.12-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if [ "${BERCON_ENABLE:-true}" = "true" ] && [ ! -x /usr/local/bin/bercon-cli ]; then
+                wget -qO /usr/local/bin/bercon-cli https://github.com/WoozyMasta/bercon-cli/releases/latest/download/bercon-cli-linux-amd64 || true
+                chmod +x /usr/local/bin/bercon-cli 2>/dev/null || true
+              fi
+              exec python /app/app.py
+          env:
+            - name: RCON_HOST
+              value: 127.0.0.1
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: RCON_PORT
+              value: "2310"
+            - name: RCON_TIMEOUT
+              value: "1.5"
+            - name: RCON_TRANSPORT
+              value: auto
+            - name: BERCON_ENABLE
+              value: "true"
+            - name: BERCON_BIN
+              value: /usr/local/bin/bercon-cli
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dayz-rcon
+                  key: RCON_PASSWORD
+          volumeMounts:
+          - mountPath: /app/app.py
+            name: dayz-status-page
+            subPath: app.py
+            readOnly: true
+          - mountPath: /srv/dayz
+            name: dayz-data
+            readOnly: true
+          - mountPath: /srv/profile
+            name: dayz-profile
+            readOnly: true
+          - mountPath: /config/serverDZ.cfg
+            name: dayz-server-cfg
+            subPath: serverDZ.cfg
+            readOnly: true
+          - mountPath: /battleye
+            name: dayz-beserver-generated
+            readOnly: true
+          ports:
+            - name: status
+              containerPort: 8090
 

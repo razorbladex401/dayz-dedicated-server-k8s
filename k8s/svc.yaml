@@ -13,7 +13,7 @@ spec:
       targetPort: 27016
     - name: rcon
       port: 2310
-      protocol: TCP
+      protocol: UDP
       targetPort: 2310
     - name: steam
       port: 27016

@@ -1,6 +1,6 @@
 # k8s
 
-This directory contains Kubernetes manifests for running a DayZ dedicated server with a filebrowser sidecar.
+This directory contains Kubernetes manifests for running a DayZ dedicated server with filebrowser and status-page sidecars.
 
 Tested against:
 - Kubernetes `v1.29.4`
@@ -8,15 +8,17 @@ Tested against:
 
 ## Current Deployment State
 
-The `dayz` Deployment currently runs 2 containers in one Pod:
+The `dayz` Deployment currently runs 3 containers in one Pod:
 
 1. DayZ server container (`razorbladex401/dayz:latest`)
 2. Filebrowser sidecar (`filebrowser/filebrowser:latest`)
+3. Status page sidecar (`python:3.12-alpine`)
 
 Notes:
 - Filebrowser is currently started with `--noauth`.
 - Filebrowser mounts DayZ data and profile volumes at `/srv/dayz` and `/srv/profile`.
 - Filebrowser stores its DB at `/config/filebrowser.db` on `filebrowser-config-pvc`.
+- Status page reads hostname from `serverDZ.cfg`, discovers loaded mods from `@` links under DayZ data, and exposes JSON at `/api/status`.
 - There is no SSH container in the current deployment.
 
 ## Manifest Overview
@@ -32,10 +34,13 @@ Contains:
 Edit this file for your server and BattlEye configuration.
 
 ### `secrets.yaml`
-Contains Kubernetes Secrets using `data:` fields (base64-encoded values), including:
-- `steamaccount` (used by Deployment)
+Contains Kubernetes Secrets for the Deployment, including:
+- `steamaccount` in `data:` form with base64-encoded values
+- `dayz-rcon` in `stringData:` form for the BattlEye RCon password
 
-Only `steamaccount` is required by the current `deployment.yaml`.
+Only `steamaccount` and `dayz-rcon` are required by the current `deployment.yaml`.
+
+The BattlEye config is templated from `configmap.yaml` and the `RCON_PASSWORD` value is injected from `dayz-rcon` at pod startup.
 
 ### `pvc.yaml`
 Creates these PVCs:
@@ -44,13 +49,18 @@ Creates these PVCs:
 - `filebrowser-config-pvc` (`1Gi`) for filebrowser DB/config
 
 ### `deployment.yaml`
-Deploys the DayZ server and filebrowser sidecar.
+Deploys the DayZ server, filebrowser sidecar, and status page sidecar.
+
+### `status-configmap.yaml`
+Contains the status web app script mounted by the status sidecar.
 
 ### `svc.yaml`
 Creates `dayz` Service as `LoadBalancer` for game, Steam, and RCON ports.
 
 ### `admin-svc.yaml`
-Creates `dayz-admin` Service as `LoadBalancer` on port `8080` for filebrowser.
+Creates `dayz-admin` Service as `LoadBalancer` with:
+- `8080` for filebrowser
+- `8090` for status page
 
 ### `serviceaccount.yaml`, `rbac.yaml`, `cronjob.yaml`
 Creates the service account, RBAC, and scheduled rollout restart job for DayZ.
@@ -92,3 +102,12 @@ kubectl -n dayz get svc dayz dayz-admin
 Use the external IP/hostname of `dayz-admin` on port `8080`.
 
 Because `--noauth` is enabled, anyone who can reach the service can browse and modify files. Keep this Service private to trusted networks.
+
+## Accessing Status Page
+
+Use the external IP/hostname of `dayz-admin` on port `8090`.
+
+Endpoints:
+- `/` HTML status page
+- `/api/status` JSON payload with hostname, mods, and uptime
+- `/healthz` basic health check

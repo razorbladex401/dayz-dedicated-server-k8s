@@ -74,8 +74,18 @@ function getModDirName() {
         echo "Warning: Could not parse name from meta.cpp for mod ${mod_id}, falling back to ID." >&2
         echo "${mod_id}"
     else
-        # Replace spaces with hyphens so mod names are safe in the -mod= parameter
-        echo "${dir_name// /-}"
+        # Normalize any leading @ from meta.cpp names, then replace spaces for safe -mod entries.
+        while [[ "${dir_name}" == @* ]]; do
+            dir_name="${dir_name#@}"
+        done
+        dir_name="${dir_name// /-}"
+
+        if [ -z "${dir_name}" ]; then
+            echo "Warning: Empty mod name after normalization for mod ${mod_id}, falling back to ID." >&2
+            echo "${mod_id}"
+        else
+            echo "${dir_name}"
+        fi
     fi
 }
 
@@ -181,11 +191,12 @@ function installMods() {
 
 
 function setupBattleye() {
-        if [ ! -f ${HOME}/battleye/beserver_x64.dll ] || [ ! -f ${HOME}/battleye/beserver_x64.so ];then
-                if [ -f ${HOME}/${GAME}/battleye/beserver_x64.dll ] || [ -f ${HOME}/${GAME}/battleye/beserver_x64.so ];then
-                        cd ${HOME}/battleye
-                        ln -s ${HOME}/${GAME}/battleye/beserver_x64.dll
-                        ln -s ${HOME}/${GAME}/battleye/beserver_x64.so
+        if [ ! -f ${HOME}/battleye/BEServer_x64.dll ] || [ ! -f ${HOME}/battleye/beserver_x64.so ];then
+                if [ -f ${HOME}/${GAME}/battleye/BEServer_x64.dll ] || [ -f ${HOME}/${GAME}/battleye/beserver_x64.so ];then
+                    if [ ! -d ${HOME}/battleye ]; then
+                        mkdir -p ${HOME}/battleye
+                    fi
+                    cp -R ${HOME}/${GAME}/battleye/* ${HOME}/battleye/ 2>/dev/null || true
                 fi
         fi
 }
