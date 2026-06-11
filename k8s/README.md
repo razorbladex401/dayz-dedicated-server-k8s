@@ -12,7 +12,7 @@ The `dayz` Deployment currently runs 3 containers in one Pod:
 
 1. DayZ server container (`razorbladex401/dayz:latest`)
 2. Filebrowser sidecar (`filebrowser/filebrowser:latest`)
-3. Status page sidecar (`python:3.12-alpine`)
+3. Status page sidecar (`razorbladex401/dayz-status:latest`)
 
 Notes:
 - Filebrowser is currently started with `--noauth`.
@@ -50,9 +50,6 @@ Creates these PVCs:
 
 ### `deployment.yaml`
 Deploys the DayZ server, filebrowser sidecar, and status page sidecar.
-
-### `status-configmap.yaml`
-Contains the status web app script mounted by the status sidecar.
 
 ### `svc.yaml`
 Creates `dayz` Service as `LoadBalancer` for game, Steam, and RCON ports.
@@ -110,4 +107,15 @@ Use the external IP/hostname of `dayz-admin` on port `8090`.
 Endpoints:
 - `/` HTML status page
 - `/api/status` JSON payload with hostname, mods, and uptime
+- `/api/logs?limit=N` JSON log tail output from mounted profile logs
 - `/healthz` basic health check
+- `/metrics` Prometheus-compatible metrics
+
+Optional status container environment variables:
+- `AUTO_REFRESH_SECONDS` default page refresh interval for the web UI
+- `LOG_TAIL_LINES` number of log lines returned per tailed log file
+- `RECENT_SESSION_LIMIT` number of completed player sessions kept in memory
+- `MODLIST` (or fallback `MODSLIST`) expected workshop IDs used by loaded-mod verification
+- `DISCORD_WEBHOOK_URL` or `STATUS_WEBHOOK_URL` to post player join/leave notifications
+- `STATUS_WEBHOOK_TIMEOUT` webhook POST timeout in seconds
+- `STATUS_LOG_LEVEL` logging level for the status app (`DEBUG`, `INFO`, `WARNING`, `ERROR`)
