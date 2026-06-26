@@ -5,6 +5,7 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import zlib
 from datetime import datetime, timezone
@@ -49,6 +50,8 @@ LOG_TAIL_LINES = env_int('LOG_TAIL_LINES', 40, 10)
 RECENT_SESSION_LIMIT = env_int('RECENT_SESSION_LIMIT', 15, 5)
 WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', os.getenv('STATUS_WEBHOOK_URL', '')).strip()
 WEBHOOK_TIMEOUT = env_float('STATUS_WEBHOOK_TIMEOUT', 3.0, 0.5)
+STATUS_POLL_SECONDS = env_int('STATUS_POLL_SECONDS', 30, 0)
+STATUS_LOCK = threading.Lock()
 ACTIVE_PLAYER_SESSIONS = {}
 RECENT_PLAYER_SESSIONS = []
 LAST_PLAYER_SNAPSHOT = None
@@ -287,7 +290,10 @@ def post_webhook_message(message):
   request = Request(
     WEBHOOK_URL,
     data=payload,
-    headers={'Content-Type': 'application/json'},
+    headers={
+      'Content-Type': 'application/json',
+      'User-Agent': 'dayz-status-webhook/1.0 (+https://github.com/RazorBladeX401/dayz-dedicated-server-k8s)',
+    },
     method='POST',
   )
   with urlopen(request, timeout=WEBHOOK_TIMEOUT) as response:
@@ -922,7 +928,7 @@ def battleye_readiness(rcon_source):
   }
 
 
-def build_status():
+def _compute_status():
   mods = loaded_mods()
   users, source = discover_logged_in_users_via_rcon()
   if source.startswith('rcon unavailable') or source.startswith('rcon login failed') or source.startswith('rcon password not configured'):
@@ -968,6 +974,21 @@ def build_status():
     'uptime_human': human_duration(uptime_seconds),
     'generated_at_utc': datetime.now(timezone.utc).isoformat(),
   }
+
+
+def build_status():
+  with STATUS_LOCK:
+    return _compute_status()
+
+
+def background_poller():
+  LOGGER.info('Background status poller started interval=%ds', STATUS_POLL_SECONDS)
+  while True:
+    time.sleep(STATUS_POLL_SECONDS)
+    try:
+      build_status()
+    except Exception as exc:  # noqa: BLE001
+      LOGGER.warning('Background status poll failed: %s', exc)
 
 
 def render_metrics(payload):
@@ -1488,4 +1509,7 @@ if __name__ == '__main__':
     STATUS_LOG_LEVEL,
     bool(WEBHOOK_URL),
   )
+  if STATUS_POLL_SECONDS > 0:
+    poller = threading.Thread(target=background_poller, name='status-poller', daemon=True)
+    poller.start()
   HTTPServer(('0.0.0.0', 8090), Handler).serve_forever()
