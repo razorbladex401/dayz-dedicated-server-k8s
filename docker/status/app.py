@@ -320,7 +320,7 @@ def send_player_change_webhook(joined, left, current_count):
     LOGGER.warning('Webhook delivery failed: %s', exc)
 
 
-def enrich_player_sessions(user_details):
+def enrich_player_sessions(user_details, reliable=True):
   global LAST_PLAYER_SNAPSHOT
 
   now = time.time()
@@ -333,26 +333,35 @@ def enrich_player_sessions(user_details):
       continue
 
     active_names.add(name)
-    session = ACTIVE_PLAYER_SESSIONS.get(name)
-    if session is None:
-      session = {
-        'name': name,
-        'first_seen_ts': now,
-        'connections': 1,
-      }
-      ACTIVE_PLAYER_SESSIONS[name] = session
-
-    session['last_seen_ts'] = now
-    session['source'] = item.get('source', session.get('source', 'status'))
-    for key in ('id', 'ping', 'guid', 'ip_port'):
-      if item.get(key) not in (None, ''):
-        session[key] = item.get(key)
-
     current = dict(item)
-    current['session_started_utc'] = isoformat_utc(session['first_seen_ts'])
-    current['session_duration_seconds'] = int(now - session['first_seen_ts'])
-    current['session_duration_human'] = human_duration(current['session_duration_seconds'])
+
+    if reliable:
+      session = ACTIVE_PLAYER_SESSIONS.get(name)
+      if session is None:
+        session = {
+          'name': name,
+          'first_seen_ts': now,
+          'connections': 1,
+        }
+        ACTIVE_PLAYER_SESSIONS[name] = session
+
+      session['last_seen_ts'] = now
+      session['source'] = item.get('source', session.get('source', 'status'))
+      for key in ('id', 'ping', 'guid', 'ip_port'):
+        if item.get(key) not in (None, ''):
+          session[key] = item.get(key)
+
+      current['session_started_utc'] = isoformat_utc(session['first_seen_ts'])
+      current['session_duration_seconds'] = int(now - session['first_seen_ts'])
+      current['session_duration_human'] = human_duration(current['session_duration_seconds'])
+
     enriched.append(current)
+
+  if not reliable:
+    # Data came from the best-effort log fallback, which parses logs that
+    # persist across restarts and can report stale players. Do not seed the
+    # snapshot, emit join/leave notifications, or mutate session state from it.
+    return enriched, RECENT_PLAYER_SESSIONS[:RECENT_SESSION_LIMIT]
 
   previous_names = LAST_PLAYER_SNAPSHOT
   if previous_names is None:
@@ -931,11 +940,13 @@ def battleye_readiness(rcon_source):
 def _compute_status():
   mods = loaded_mods()
   users, source = discover_logged_in_users_via_rcon()
+  reliable_source = True
   if source.startswith('rcon unavailable') or source.startswith('rcon login failed') or source.startswith('rcon password not configured'):
     fallback_users, fallback_source = discover_logged_in_users_from_logs()
     if fallback_users:
       users = fallback_users
     source = f'{source}; fallback: {fallback_source}'
+    reliable_source = False
 
   user_details = [{'name': name, 'source': 'status'} for name in users]
   if source.startswith('bercon-cli players command via '):
@@ -948,7 +959,7 @@ def _compute_status():
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError):
       pass
 
-  user_details, recent_sessions = enrich_player_sessions(user_details)
+  user_details, recent_sessions = enrich_player_sessions(user_details, reliable=reliable_source)
   users = [item['name'] for item in user_details]
 
   be = battleye_readiness(source)

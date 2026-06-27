@@ -109,5 +109,10 @@ see [k8s/deployment.yaml](../../k8s/deployment.yaml).
   sends an explicit `User-Agent` header.
 - The first status build seeds the player snapshot silently (no notification);
   subsequent changes are reported.
+- Join/leave notifications and session tracking only use authoritative RCON /
+  `bercon-cli` data. The log-based fallback (which parses logs that persist
+  across restarts and can list stale players) is never used to seed the snapshot
+  or emit webhooks, preventing phantom "left" notifications after a restart.
 - Player-change detection granularity equals `STATUS_POLL_SECONDS`. After a
-  container restart the in-memory snapshot resets and is re-seeded on first poll.
+  container restart the in-memory snapshot resets and is re-seeded on the first
+  authoritative poll.
